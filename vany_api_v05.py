@@ -21,9 +21,12 @@ from flask import Flask, request, jsonify
 
 from engine_v05 import VanyEngineV05
 from provider_v05 import ProviderManager
+from key_manager_v12 import verificar_api_key as verificar_api_key_db
+from usage_manager_v14 import registrar_usage, inicializar_usage
 
 import uuid
 import threading
+import time
 
 
 # ============================================================
@@ -37,6 +40,201 @@ ENGINE_VERSION = "05.6"
 MAX_CONVERSATIONS = 100
 
 HISTORY_FOR_ONLINE = 10
+
+
+# ============================================================
+# VANY API V1.1 - AUTENTICAÇÃO
+# ============================================================
+
+VANY_API_KEY = os.environ.get("VANY_API_KEY", "").strip()
+
+
+def verificar_api_key():
+
+    autorizacao = request.headers.get(
+        "Authorization",
+        ""
+    ).strip()
+
+    if not autorizacao.startswith("Bearer "):
+
+        return False
+
+    chave = autorizacao[7:].strip()
+
+    if not chave:
+
+        return False
+
+    # Primeiro: chaves gerenciadas pelo Vany Key Manager
+    if verificar_api_key_db(chave):
+
+        return True
+
+    # Compatibilidade temporária com VANY_API_KEY
+    return bool(
+        VANY_API_KEY
+        and chave == VANY_API_KEY
+    )
+
+
+def erro_auth():
+
+    return jsonify({
+
+        "error": {
+
+            "type":
+                "authentication_error",
+
+            "message":
+                "API key inválida ou ausente."
+
+        }
+
+    }), 401
+
+
+# ============================================================
+# VANY API V1.4 - USAGE TRACKING
+# ============================================================
+
+def obter_api_key_id(api_key):
+
+    if not api_key:
+        return None
+
+    import hashlib
+    import sqlite3
+    from pathlib import Path
+
+    key_hash = hashlib.sha256(
+        api_key.encode("utf-8")
+    ).hexdigest()
+
+    db_path = Path("vany_keys.db")
+
+    with sqlite3.connect(db_path) as db:
+        db.execute("PRAGMA foreign_keys = ON")
+
+        row = db.execute(
+            """
+            SELECT id
+            FROM api_keys
+            WHERE key_hash = ?
+            LIMIT 1
+            """,
+            (key_hash,)
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return row[0]
+
+
+def registrar_uso_api(
+    endpoint,
+    model,
+    status_code
+):
+
+    api_key = obter_chave_autorizacao()
+
+    if not api_key:
+        return
+
+    api_key_id = obter_api_key_id(api_key)
+
+    if api_key_id is None:
+        return
+
+    registrar_usage(
+        api_key_id,
+        endpoint,
+        model,
+        status_code
+    )
+
+
+# ============================================================
+# VANY API V1.3 - RATE LIMITING
+# ============================================================
+
+RATE_LIMIT_REQUESTS = 20
+RATE_LIMIT_WINDOW = 60
+
+rate_limit_data = {}
+rate_limit_lock = threading.Lock()
+
+
+def obter_chave_autorizacao():
+
+    autorizacao = request.headers.get(
+        "Authorization",
+        ""
+    ).strip()
+
+    if not autorizacao.startswith("Bearer "):
+
+        return ""
+
+    return autorizacao[7:].strip()
+
+
+def verificar_rate_limit():
+
+    chave = obter_chave_autorizacao()
+
+    if not chave:
+
+        return False
+
+    agora = time.time()
+
+    with rate_limit_lock:
+
+        registros = rate_limit_data.get(
+            chave,
+            []
+        )
+
+        registros = [
+            timestamp
+            for timestamp in registros
+            if agora - timestamp < RATE_LIMIT_WINDOW
+        ]
+
+        if len(registros) >= RATE_LIMIT_REQUESTS:
+
+            rate_limit_data[chave] = registros
+
+            return False
+
+        registros.append(agora)
+
+        rate_limit_data[chave] = registros
+
+    return True
+
+
+def erro_rate_limit():
+
+    return jsonify({
+
+        "error": {
+
+            "type":
+                "rate_limit_error",
+
+            "message":
+                "Limite de requisições excedido. Tente novamente mais tarde."
+
+        }
+
+    }), 429
+
+
 
 
 # ============================================================
@@ -636,7 +834,6 @@ def chat():
             silent=True
         )
 
-
         if not isinstance(
             dados,
             dict
@@ -649,6 +846,7 @@ def chat():
 
                 "error":
                     "JSON inválido."
+
             }), 400
 
 
@@ -670,6 +868,7 @@ def chat():
 
                 "error":
                     "message deve ser texto."
+
             }), 400
 
 
@@ -685,6 +884,7 @@ def chat():
 
                 "error":
                     "Mensagem vazia."
+
             }), 400
 
 
@@ -711,6 +911,7 @@ def chat():
 
                     "error":
                         "conversation_id deve ser texto."
+
                 }), 400
 
 
@@ -725,6 +926,7 @@ def chat():
 
                     "error":
                         "conversation_id não encontrado."
+
                 }), 404
 
 
@@ -749,20 +951,90 @@ def chat():
 
 
         # ====================================================
-        # ONLINE
-        #
-        # IMPORTANTE:
-        # Não adicionamos a mensagem ao histórico
-        # antes do prompt online.
-        #
-        # responder_online() lê o histórico existente
-        # e acrescenta a mensagem atual no prompt.
+        # RESPOSTA
         # ====================================================
 
         resposta = None
 
 
-        if provider_nome != "local":
+        # ====================================================
+        # IDENTIDADE DA VANY
+        # ====================================================
+
+        mensagem_identidade = (
+            mensagem.lower().strip()
+        )
+
+
+        # NOME
+        if (
+            "qual é o seu nome" in mensagem_identidade
+            or
+            "qual e o seu nome" in mensagem_identidade
+            or
+            "como você se chama" in mensagem_identidade
+            or
+            "como voce se chama" in mensagem_identidade
+            or
+            "quem é você" in mensagem_identidade
+            or
+            "quem e voce" in mensagem_identidade
+        ):
+
+            resposta = (
+                "Meu nome é Vany."
+            )
+
+
+        # CRIADOR
+        elif (
+            "quem é o seu criador" in mensagem_identidade
+            or
+            "quem e o seu criador" in mensagem_identidade
+            or
+            "quem criou você" in mensagem_identidade
+            or
+            "quem criou voce" in mensagem_identidade
+            or
+            "quem fez você" in mensagem_identidade
+            or
+            "quem fez voce" in mensagem_identidade
+        ):
+
+            resposta = (
+                "Meu criador é Vanildo."
+            )
+
+
+        # LOCAL DE CRIAÇÃO
+        elif (
+            "onde foste criada" in mensagem_identidade
+            or
+            "onde foi criada" in mensagem_identidade
+            or
+            "onde você foi criada" in mensagem_identidade
+            or
+            "onde voce foi criada" in mensagem_identidade
+            or
+            "onde você nasceu" in mensagem_identidade
+            or
+            "onde voce nasceu" in mensagem_identidade
+        ):
+
+            resposta = (
+                "Fui criada em Moçambique."
+            )
+
+
+        # ====================================================
+        # ONLINE
+        # ====================================================
+
+        if (
+            resposta is None
+            and
+            provider_nome != "local"
+        ):
 
             resposta = responder_online(
                 mensagem,
@@ -786,14 +1058,37 @@ def chat():
 
         else:
 
-            modo = provider_nome
+            if (
+                provider_nome != "local"
+                and
+                resposta is not None
+            ):
+
+                modo = provider_nome
+
+            else:
+
+                modo = "local"
+
+
+        # ====================================================
+        # GARANTIR RESPOSTA TEXTO
+        # ====================================================
+
+        if resposta is None:
+
+            resposta = (
+                "Desculpe, não consegui gerar uma resposta."
+            )
+
+
+        resposta = str(
+            resposta
+        )
 
 
         # ====================================================
         # GUARDAR PERGUNTA + RESPOSTA
-        #
-        # Somente depois de obter a resposta.
-        # Isso evita duplicar a mensagem no prompt online.
         # ====================================================
 
         engine_conversa = obter_conversa(
@@ -835,6 +1130,7 @@ def chat():
 
             "reply":
                 resposta
+
         })
 
 
@@ -851,15 +1147,384 @@ def chat():
             "success":
                 False,
 
-            "engine":
-                ENGINE_VERSION,
-
             "error":
                 str(erro)
 
         }), 500
+# ============================================================
+# VANY API V1
+# ============================================================
+
+@app.get("/v1/health")
+def v1_health():
+
+    return jsonify({
+
+        "status":
+            "ok",
+
+        "service":
+            "Vany API",
+
+        "version":
+            "1.0.0",
+
+        "engine":
+            ENGINE_VERSION
+
+    })
 
 
+@app.get("/v1/models")
+def v1_models():
+
+    if not verificar_api_key():
+
+        return erro_auth()
+
+    if not verificar_rate_limit():
+
+        return erro_rate_limit()
+
+    registrar_uso_api(
+        "/v1/models",
+        None,
+        200
+    )
+
+    return jsonify({
+
+        "object":
+            "list",
+
+        "data": [
+
+            {
+                "id":
+                    "vany-fast",
+
+                "object":
+                    "model",
+
+                "provider":
+                    "vany",
+
+                "capabilities": [
+                    "text"
+                ]
+            },
+
+            {
+                "id":
+                    "vany-pro",
+
+                "object":
+                    "model",
+
+                "provider":
+                    "vany",
+
+                "capabilities": [
+                    "text"
+                ]
+            }
+
+        ]
+
+    })
+
+
+@app.post("/v1/chat")
+def v1_chat():
+
+    if not verificar_api_key():
+
+        return erro_auth()
+
+    if not verificar_rate_limit():
+
+        return erro_rate_limit()
+
+    try:
+
+        dados = request.get_json(
+            silent=True
+        )
+
+        if not isinstance(
+            dados,
+            dict
+        ):
+
+            return jsonify({
+
+                "error": {
+
+                    "type":
+                        "invalid_request",
+
+                    "message":
+                        "JSON inválido."
+
+                }
+
+            }), 400
+
+
+        model = dados.get(
+            "model",
+            "vany-fast"
+        )
+
+
+        messages = dados.get(
+            "messages"
+        )
+
+
+        if not isinstance(
+            messages,
+            list
+        ):
+
+            return jsonify({
+
+                "error": {
+
+                    "type":
+                        "invalid_request",
+
+                    "message":
+                        "messages deve ser uma lista."
+
+                }
+
+            }), 400
+
+
+        if len(messages) == 0:
+
+            return jsonify({
+
+                "error": {
+
+                    "type":
+                        "invalid_request",
+
+                    "message":
+                        "messages não pode estar vazio."
+
+                }
+
+            }), 400
+
+
+        ultima_mensagem = messages[-1]
+
+
+        if not isinstance(
+            ultima_mensagem,
+            dict
+        ):
+
+            return jsonify({
+
+                "error": {
+
+                    "type":
+                        "invalid_request",
+
+                    "message":
+                        "Mensagem inválida."
+
+                }
+
+            }), 400
+
+
+        mensagem = ultima_mensagem.get(
+            "content",
+            ""
+        )
+
+
+        if not isinstance(
+            mensagem,
+            str
+        ):
+
+            return jsonify({
+
+                "error": {
+
+                    "type":
+                        "invalid_request",
+
+                    "message":
+                        "content deve ser texto."
+
+                }
+
+            }), 400
+
+
+        mensagem = mensagem.strip()
+
+
+        if not mensagem:
+
+            return jsonify({
+
+                "error": {
+
+                    "type":
+                        "invalid_request",
+
+                    "message":
+                        "content não pode estar vazio."
+
+                }
+
+            }), 400
+
+
+        # ----------------------------------------------------
+        # REUTILIZAR O MOTOR EXISTENTE
+        # ----------------------------------------------------
+
+        with app.test_request_context(
+            "/chat",
+            method="POST",
+            json={
+                "message": mensagem
+            }
+        ):
+
+            resposta = chat()
+
+
+        # ----------------------------------------------------
+        # CONVERTER RESPOSTA DO FLASK
+        # ----------------------------------------------------
+
+        if isinstance(
+            resposta,
+            tuple
+        ):
+
+            response_object = resposta[0]
+            status_code = resposta[1]
+
+        else:
+
+            response_object = resposta
+            status_code = 200
+
+
+        dados_resposta = response_object.get_json()
+
+
+        if status_code != 200:
+
+            registrar_uso_api(
+                "/v1/chat",
+                model,
+                status_code
+            )
+
+            return jsonify({
+
+                "error": {
+
+                    "type":
+                        "engine_error",
+
+                    "message":
+                        dados_resposta.get(
+                            "error",
+                            "Erro ao processar pedido."
+                        )
+
+                }
+
+            }), status_code
+
+
+        reply = dados_resposta.get(
+            "reply",
+            ""
+        )
+
+
+        registrar_uso_api(
+            "/v1/chat",
+            model,
+            200
+        )
+
+
+        return jsonify({
+
+            "id":
+                "vny_chat",
+
+            "object":
+                "chat.completion",
+
+            "model":
+                model,
+
+            "provider":
+                "vany",
+
+            "choices": [
+
+                {
+
+                    "index":
+                        0,
+
+                    "message": {
+
+                        "role":
+                            "assistant",
+
+                        "content":
+                            reply
+
+                    },
+
+                    "finish_reason":
+                        "stop"
+
+                }
+
+            ]
+
+        })
+
+
+    except Exception as erro:
+
+        print(
+            "ERRO /v1/chat:",
+            erro
+        )
+
+
+        return jsonify({
+
+            "error": {
+
+                "type":
+                    "server_error",
+
+                "message":
+                    str(erro)
+
+            }
+
+        }), 500
 # ============================================================
 # LIMPAR CONVERSA
 # ============================================================

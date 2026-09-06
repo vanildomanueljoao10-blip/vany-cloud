@@ -3,3 +3,6 @@ __pycache__/
 .env
 *.log
 vany_api_v05_render_backup.py
+vany_keys.db
+vany_keys_v1_5_backup.db
+*_backup.py
