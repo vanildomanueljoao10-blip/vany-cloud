@@ -436,81 +436,127 @@ def responder_online(
     mensagem,
     conversation_id=None
 ):
+    """
+    Envia a mensagem para o provider online configurado.
+
+    IMPORTANTE:
+    Erros do provider não são escondidos.
+    Eles serão enviados para a rota /chat,
+    permitindo identificar o problema real.
+    """
 
     try:
+        # ==============================
+        # OBTER INFORMAÇÕES DO PROVIDER
+        # ==============================
 
-        provider_info = (
-            provider_manager.info()
-        )
-
+        provider_info = provider_manager.info()
 
         provider_nome = provider_info.get(
             "provider",
             "local"
         )
 
+        provider_model = provider_info.get(
+            "model",
+            "desconhecido"
+        )
+
+        provider_configured = provider_info.get(
+            "configured",
+            False
+        )
+
+        # ==============================
+        # NÃO ENVIAR SE FOR LOCAL
+        # ==============================
 
         if provider_nome == "local":
-
             return None
 
+        # ==============================
+        # VERIFICAR CONFIGURAÇÃO
+        # ==============================
 
-        # ====================================================
+        if not provider_configured:
+            raise RuntimeError(
+                "Provider online não está configurado. "
+                "Verifique a chave da API e as variáveis "
+                "de ambiente do servidor."
+            )
+
+        # ==============================
         # CONSTRUIR PROMPT COM HISTÓRICO
-        # ====================================================
+        # ==============================
 
         prompt = construir_prompt_online(
             mensagem,
             conversation_id
         )
 
-
-        # ====================================================
+        # ==============================
         # ENVIAR AO PROVIDER
-        # ====================================================
+        # ==============================
 
-        resposta = (
-            provider_manager.responder(
-                prompt
-            )
+        resposta = provider_manager.responder(
+            prompt
         )
 
+        # ==============================
+        # VALIDAR RESPOSTA
+        # ==============================
 
         if resposta is None:
-
-            return None
-
-
-        if not isinstance(
-            resposta,
-            str
-        ):
-
-            resposta = str(
-                resposta
+            raise RuntimeError(
+                "O provider online não retornou resposta."
             )
 
+        if not isinstance(resposta, str):
+            resposta = str(resposta)
 
         resposta = resposta.strip()
 
-
         if not resposta:
+            raise RuntimeError(
+                "O provider online retornou uma resposta vazia."
+            )
 
-            return None
+        # ==============================
+        # LOG
+        # ==============================
 
+        print(
+            "Provider online OK:",
+            provider_nome,
+            "| modelo:",
+            provider_model
+        )
+
+        # ==============================
+        # RETORNAR RESPOSTA
+        # ==============================
 
         return resposta
 
-
     except Exception as erro:
+
+        # ==============================
+        # NÃO ESCONDER O ERRO
+        # ==============================
 
         print(
             "Provider online indisponível:",
-            erro
+            repr(erro)
         )
 
-        return None
+        # IMPORTANTE:
+        # O erro sobe para /chat.
+        # Assim não haverá fallback silencioso
+        # para o modelo local.
 
+        raise RuntimeError(
+            f"Provider online indisponível: {erro}"
+        ) from erro
 
 # ============================================================
 # MODELO LOCAL
@@ -825,10 +871,14 @@ def selecionar_provider():
 # CHAT
 # ============================================================
 
-@app.post("/chat")
+@app.route("/chat", methods=["POST"])
 def chat():
 
     try:
+
+        # ============================================================
+        # RECEBER JSON
+        # ============================================================
 
         dados = request.get_json(
             silent=True
@@ -838,64 +888,46 @@ def chat():
             dados,
             dict
         ):
-
             return jsonify({
-
-                "success":
-                    False,
-
-                "error":
-                    "JSON inválido."
-
+                "success": False,
+                "engine": ENGINE_VERSION,
+                "error": "JSON inválido."
             }), 400
 
+        # ============================================================
+        # MENSAGEM
+        # ============================================================
 
         mensagem = dados.get(
             "message",
             ""
         )
 
-
         if not isinstance(
             mensagem,
             str
         ):
-
-            return jsonify({
-
-                "success":
-                    False,
-
-                "error":
-                    "message deve ser texto."
-
-            }), 400
-
+            mensagem = str(
+                mensagem
+            )
 
         mensagem = mensagem.strip()
-
 
         if not mensagem:
 
             return jsonify({
-
-                "success":
-                    False,
-
-                "error":
-                    "Mensagem vazia."
-
+                "success": False,
+                "engine": ENGINE_VERSION,
+                "error": "Mensagem vazia."
             }), 400
 
-
-        # ====================================================
+        # ============================================================
         # CONVERSATION ID
-        # ====================================================
+        # ============================================================
 
         conversation_id = dados.get(
             "conversation_id"
         )
-
 
         if conversation_id is not None:
 
@@ -905,196 +937,222 @@ def chat():
             ):
 
                 return jsonify({
-
-                    "success":
-                        False,
-
-                    "error":
-                        "conversation_id deve ser texto."
-
+                    "success": False,
+                    "engine": ENGINE_VERSION,
+                    "error": "conversation_id inválido."
                 }), 400
 
+            conversation_id = conversation_id.strip()
 
-            if obter_conversa(
+        # ============================================================
+        # CRIAR / OBTER CONVERSA
+        # ============================================================
+
+        if conversation_id is not None:
+
+            engine_conversa = obter_conversa(
                 conversation_id
-            ) is None:
+            )
+
+            if engine_conversa is None:
 
                 return jsonify({
-
-                    "success":
-                        False,
-
-                    "error":
-                        "conversation_id não encontrado."
-
+                    "success": False,
+                    "engine": ENGINE_VERSION,
+                    "error": "conversation_id não encontrado."
                 }), 404
-
 
         else:
 
-            conversation_id = (
-                criar_conversa()
+            conversation_id = criar_conversa()
+
+            engine_conversa = obter_conversa(
+                conversation_id
             )
 
-
-        # ====================================================
+        # ============================================================
         # PROVIDER
-        # ====================================================
+        # ============================================================
 
         provider = obter_provider()
-
 
         provider_nome = provider.get(
             "provider",
             "local"
         )
 
+        provider_model = provider.get(
+            "model",
+            "local"
+        )
 
-        # ====================================================
-        # RESPOSTA
-        # ====================================================
+        provider_configured = provider.get(
+            "configured",
+            False
+        )
 
-        resposta = None
-
-
-        # ====================================================
+        # ============================================================
         # IDENTIDADE DA VANY
-        # ====================================================
+        # ============================================================
 
         mensagem_identidade = (
             mensagem.lower().strip()
         )
 
+        resposta = None
+        modo = provider_nome
 
+        # ============================================================
         # NOME
+        # ============================================================
+
         if (
             "qual é o seu nome" in mensagem_identidade
-            or
-            "qual e o seu nome" in mensagem_identidade
-            or
-            "como você se chama" in mensagem_identidade
-            or
-            "como voce se chama" in mensagem_identidade
-            or
-            "quem é você" in mensagem_identidade
-            or
-            "quem e voce" in mensagem_identidade
+            or "qual e o seu nome" in mensagem_identidade
+            or "como você se chama" in mensagem_identidade
+            or "como voce se chama" in mensagem_identidade
+            or "quem é você" in mensagem_identidade
+            or "quem e voce" in mensagem_identidade
         ):
 
             resposta = (
                 "Meu nome é Vany."
             )
 
+            modo = "identity"
 
+        # ============================================================
         # CRIADOR
+        # ============================================================
+
         elif (
             "quem é o seu criador" in mensagem_identidade
-            or
-            "quem e o seu criador" in mensagem_identidade
-            or
-            "quem criou você" in mensagem_identidade
-            or
-            "quem criou voce" in mensagem_identidade
-            or
-            "quem fez você" in mensagem_identidade
-            or
-            "quem fez voce" in mensagem_identidade
+            or "quem e o seu criador" in mensagem_identidade
+            or "quem criou você" in mensagem_identidade
+            or "quem criou voce" in mensagem_identidade
+            or "quem fez você" in mensagem_identidade
+            or "quem fez voce" in mensagem_identidade
         ):
 
             resposta = (
-                "Meu criador é Vanildo."
+                "Fui criada por Vanildo."
             )
 
+            modo = "identity"
 
+        # ============================================================
         # LOCAL DE CRIAÇÃO
+        # ============================================================
+
         elif (
-            "onde foste criada" in mensagem_identidade
-            or
             "onde foi criada" in mensagem_identidade
-            or
-            "onde você foi criada" in mensagem_identidade
-            or
-            "onde voce foi criada" in mensagem_identidade
-            or
-            "onde você nasceu" in mensagem_identidade
-            or
-            "onde voce nasceu" in mensagem_identidade
+            or "onde foi criado" in mensagem_identidade
+            or "onde você foi criada" in mensagem_identidade
+            or "onde voce foi criada" in mensagem_identidade
+            or "onde você nasceu" in mensagem_identidade
+            or "onde voce nasceu" in mensagem_identidade
         ):
 
             resposta = (
                 "Fui criada em Moçambique."
             )
 
+            modo = "identity"
 
-        # ====================================================
+        # ============================================================
         # ONLINE
-        # ====================================================
-
-        if (
-            resposta is None
-            and
-            provider_nome != "local"
-        ):
-
-            resposta = responder_online(
-                mensagem,
-                conversation_id
-            )
-
-
-        # ====================================================
-        # FALLBACK LOCAL
-        # ====================================================
+        # ============================================================
 
         if resposta is None:
 
-            resposta = responder_local(
-                mensagem,
-                conversation_id
-            )
+            if provider_nome == "local":
 
-            modo = "local"
-
-
-        else:
-
-            if (
-                provider_nome != "local"
-                and
-                resposta is not None
-            ):
-
-                modo = provider_nome
-
-            else:
+                resposta = responder_local(
+                    mensagem,
+                    conversation_id
+                )
 
                 modo = "local"
 
+            else:
 
-        # ====================================================
-        # GARANTIR RESPOSTA TEXTO
-        # ====================================================
+                if not provider_configured:
+
+                    return jsonify({
+                        "success": False,
+                        "engine": ENGINE_VERSION,
+                        "mode": "online",
+                        "provider": provider_nome,
+                        "model": provider_model,
+                        "configured": False,
+                        "conversation_id": conversation_id,
+                        "error": (
+                            "O provider online não está configurado."
+                        )
+                    }), 503
+
+                # ====================================================
+                # CHAMAR PROVIDER ONLINE
+                # ====================================================
+
+                try:
+
+                    resposta = responder_online(
+                        mensagem,
+                        conversation_id
+                    )
+
+                    modo = provider_nome
+
+                except Exception as erro:
+
+                    print(
+                        "ERRO PROVIDER /chat:",
+                        repr(erro)
+                    )
+
+                    # =================================================
+                    # NÃO FAZER FALLBACK PARA O MODELO LOCAL
+                    # =================================================
+
+                    return jsonify({
+                        "success": False,
+                        "engine": ENGINE_VERSION,
+                        "mode": "online_error",
+                        "provider": provider_nome,
+                        "model": provider_model,
+                        "configured": provider_configured,
+                        "conversation_id": conversation_id,
+                        "error": str(erro)
+                    }), 503
+
+        # ============================================================
+        # GARANTIR RESPOSTA
+        # ============================================================
 
         if resposta is None:
 
             resposta = (
-                "Desculpe, não consegui gerar uma resposta."
+                "Desculpe, não consegui gerar uma resposta agora."
             )
-
 
         resposta = str(
             resposta
-        )
+        ).strip()
 
+        if not resposta:
 
-        # ====================================================
+            resposta = (
+                "Desculpe, não consegui gerar uma resposta agora."
+            )
+
+        # ============================================================
         # GUARDAR PERGUNTA + RESPOSTA
-        # ====================================================
+        # ============================================================
 
         engine_conversa = obter_conversa(
             conversation_id
         )
-
 
         if engine_conversa is not None:
 
@@ -1106,50 +1164,32 @@ def chat():
                 resposta
             )
 
-
-        # ====================================================
+        # ============================================================
         # RESPOSTA JSON
-        # ====================================================
+        # ============================================================
 
         return jsonify({
-
-            "success":
-                True,
-
-            "engine":
-                ENGINE_VERSION,
-
-            "mode":
-                modo,
-
-            "provider":
-                provider_nome,
-
-            "conversation_id":
-                conversation_id,
-
-            "reply":
-                resposta
-
+            "success": True,
+            "engine": ENGINE_VERSION,
+            "mode": modo,
+            "provider": provider_nome,
+            "model": provider_model,
+            "configured": provider_configured,
+            "conversation_id": conversation_id,
+            "reply": resposta
         })
-
 
     except Exception as erro:
 
         print(
             "ERRO /chat:",
-            erro
+            repr(erro)
         )
 
-
         return jsonify({
-
-            "success":
-                False,
-
-            "error":
-                str(erro)
-
+            "success": False,
+            "engine": ENGINE_VERSION,
+            "error": str(erro)
         }), 500
 # ============================================================
 # VANY API V1
