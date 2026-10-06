@@ -1,3 +1,4 @@
 Flask
 gunicorn
 Authlib
+requests>=2.31.0
