@@ -1,170 +1,379 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import os
-import json
-import urllib.request
-import urllib.error
+import base64
+import requests
 
 
 class OpenRouterProvider:
 
-    URL = "https://openrouter.ai/api/v1/chat/completions"
-
     def __init__(self):
-
         self.api_key = os.getenv(
             "OPENROUTER_API_KEY",
             ""
         ).strip()
 
         self.model = os.getenv(
-            "OPENROUTER_MODEL",
-            "openrouter/free"
-        ).strip()
+            "OPENROUTER_VISION_MODEL",
+            "google/gemini-2.5-flash"
+        )
+
+        self.stt_model = os.getenv(
+            "OPENROUTER_STT_MODEL",
+            "openai/whisper-1"
+        )
+
+        self.tts_model = os.getenv(
+            "OPENROUTER_TTS_MODEL",
+            "openai/gpt-4o-mini-tts-2025-12-15"
+        )
+
+        self.tts_voice = os.getenv(
+            "OPENROUTER_TTS_VOICE",
+            "alloy"
+        )
+
+        self.chat_url = (
+            "https://openrouter.ai/api/v1/chat/completions"
+        )
+
+        self.stt_url = (
+            "https://openrouter.ai/api/v1/audio/transcriptions"
+        )
+
+        self.tts_url = (
+            "https://openrouter.ai/api/v1/audio/speech"
+        )
 
     def configurado(self):
-
         return bool(self.api_key)
 
     def info(self):
-
         return {
             "provider": "openrouter",
             "model": self.model,
             "configured": self.configurado()
         }
 
-    def responder(self, mensagem):
+    def _headers(self):
+        return {
+            "Authorization": "Bearer " + self.api_key,
+            "Content-Type": "application/json"
+        }
+
+    def responder(
+        self,
+        prompt,
+        image=None,
+        images=None
+    ):
 
         if not self.configurado():
-
             raise RuntimeError(
-                "OPENROUTER_API_KEY não configurada."
+                "OPENROUTER_API_KEY não configurada"
             )
 
-        dados = {
+        prompt = str(prompt or "").strip()
+
+        if not prompt:
+            prompt = (
+                "Analise o conteúdo enviado e "
+                "responda de forma clara."
+            )
+
+        content = [
+            {
+                "type": "text",
+                "text": prompt
+            }
+        ]
+
+        imagens = []
+
+        if images:
+            for imagem in images:
+                if imagem:
+                    imagens.append(imagem)
+
+        elif image:
+            imagens.append(image)
+
+        for imagem in imagens:
+
+            if not isinstance(imagem, str):
+                continue
+
+            imagem = imagem.strip()
+
+            if not imagem:
+                continue
+
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": imagem
+                    }
+                }
+            )
+
+        if len(content) == 1:
+
+            payload_content = prompt
+
+        else:
+
+            payload_content = content
+
+        payload = {
             "model": self.model,
             "messages": [
                 {
                     "role": "user",
-                    "content": mensagem
+                    "content": payload_content
                 }
-            ]
+            ],
+            "max_tokens": 4096
         }
-
-        corpo = json.dumps(
-            dados
-        ).encode("utf-8")
-
-        requisicao = urllib.request.Request(
-            self.URL,
-            data=corpo,
-            headers={
-                "Authorization":
-                    "Bearer " + self.api_key,
-
-                "Content-Type":
-                    "application/json",
-
-                "HTTP-Referer":
-                    "http://localhost",
-
-                "X-Title":
-                    "Vany IA"
-            },
-            method="POST"
-        )
 
         try:
 
-            with urllib.request.urlopen(
-                requisicao,
-                timeout=60
-            ) as resposta:
-
-                texto = resposta.read().decode(
-                    "utf-8"
-                )
-
-        except urllib.error.HTTPError as erro:
-
-            erro_texto = erro.read().decode(
-                "utf-8",
-                errors="replace"
+            resposta = requests.post(
+                self.chat_url,
+                headers=self._headers(),
+                json=payload,
+                timeout=90
             )
+
+        except requests.RequestException as erro:
+
+            raise RuntimeError(
+                "Falha de conexão com OpenRouter: "
+                + str(erro)
+            ) from erro
+
+        if resposta.status_code != 200:
 
             raise RuntimeError(
                 "OpenRouter HTTP "
-                + str(erro.code)
+                + str(resposta.status_code)
                 + ": "
-                + erro_texto
-            )
-
-        except urllib.error.URLError as erro:
-
-            raise RuntimeError(
-                "Erro de conexão com OpenRouter: "
-                + str(erro.reason)
+                + resposta.text[:1000]
             )
 
         try:
 
-            resultado = json.loads(texto)
+            dados = resposta.json()
 
-        except json.JSONDecodeError:
-
-            raise RuntimeError(
-                "Resposta inválida do OpenRouter."
-            )
-
-        escolhas = resultado.get(
-            "choices",
-            []
-        )
-
-        if not escolhas:
+        except Exception as erro:
 
             raise RuntimeError(
-                "OpenRouter não retornou resposta."
+                "OpenRouter retornou JSON inválido: "
+                + str(erro)
+            ) from erro
+
+        try:
+
+            texto = dados[
+                "choices"
+            ][0][
+                "message"
+            ][
+                "content"
+            ]
+
+        except Exception:
+
+            raise RuntimeError(
+                "Resposta inesperada do OpenRouter: "
+                + str(dados)[:1000]
             )
 
-        mensagem_resultado = escolhas[0].get(
-            "message",
-            {}
-        )
-
-        resposta = mensagem_resultado.get(
-            "content",
-            ""
-        )
-
-        if isinstance(resposta, list):
+        if isinstance(texto, list):
 
             partes = []
 
-            for parte in resposta:
+            for item in texto:
 
-                if isinstance(parte, dict):
+                if not isinstance(item, dict):
+                    continue
 
-                    valor = parte.get(
-                        "text",
-                        ""
+                if item.get("type") == "text":
+
+                    partes.append(
+                        str(
+                            item.get(
+                                "text",
+                                ""
+                            )
+                        )
                     )
 
-                    if valor:
-                        partes.append(valor)
+            texto = "\n".join(partes)
 
-            resposta = "".join(partes)
+        texto = str(texto or "").strip()
 
-        resposta = str(
-            resposta
-        ).strip()
-
-        if not resposta:
+        if not texto:
 
             raise RuntimeError(
-                "OpenRouter retornou resposta vazia."
+                "O modelo retornou uma resposta vazia"
             )
 
-        return resposta
+        return texto
+
+    def transcrever_audio(
+        self,
+        audio_base64,
+        formato="m4a"
+    ):
+
+        if not self.configurado():
+            raise RuntimeError(
+                "OPENROUTER_API_KEY não configurada"
+            )
+
+        audio_base64 = str(
+            audio_base64 or ""
+        ).strip()
+
+        if not audio_base64:
+
+            raise RuntimeError(
+                "Áudio vazio"
+            )
+
+        formato = str(
+            formato or "m4a"
+        ).lower().strip()
+
+        formatos_validos = {
+            "wav",
+            "mp3",
+            "flac",
+            "m4a",
+            "ogg",
+            "webm",
+            "aac"
+        }
+
+        if formato not in formatos_validos:
+
+            formato = "m4a"
+
+        payload = {
+            "model": self.stt_model,
+            "input_audio": {
+                "data": audio_base64,
+                "format": formato
+            },
+            "language": "pt"
+        }
+
+        try:
+
+            resposta = requests.post(
+                self.stt_url,
+                headers=self._headers(),
+                json=payload,
+                timeout=90
+            )
+
+        except requests.RequestException as erro:
+
+            raise RuntimeError(
+                "Falha de conexão com STT: "
+                + str(erro)
+            ) from erro
+
+        if resposta.status_code != 200:
+
+            raise RuntimeError(
+                "OpenRouter STT HTTP "
+                + str(resposta.status_code)
+                + ": "
+                + resposta.text[:1000]
+            )
+
+        try:
+
+            dados = resposta.json()
+
+        except Exception as erro:
+
+            raise RuntimeError(
+                "STT retornou JSON inválido: "
+                + str(erro)
+            ) from erro
+
+        texto = str(
+            dados.get(
+                "text",
+                ""
+            )
+        ).strip()
+
+        if not texto:
+
+            raise RuntimeError(
+                "A transcrição retornou vazia"
+            )
+
+        return texto
+
+    def gerar_voz(self, texto):
+
+        if not self.configurado():
+
+            raise RuntimeError(
+                "OPENROUTER_API_KEY não configurada"
+            )
+
+        texto = str(
+            texto or ""
+        ).strip()
+
+        if not texto:
+
+            raise RuntimeError(
+                "Texto vazio para TTS"
+            )
+
+        payload = {
+            "model": self.tts_model,
+            "input": texto,
+            "voice": self.tts_voice,
+            "response_format": "mp3"
+        }
+
+        try:
+
+            resposta = requests.post(
+                self.tts_url,
+                headers=self._headers(),
+                json=payload,
+                timeout=90
+            )
+
+        except requests.RequestException as erro:
+
+            raise RuntimeError(
+                "Falha de conexão com TTS: "
+                + str(erro)
+            ) from erro
+
+        if resposta.status_code != 200:
+
+            raise RuntimeError(
+                "OpenRouter TTS HTTP "
+                + str(resposta.status_code)
+                + ": "
+                + resposta.text[:1000]
+            )
+
+        if not resposta.content:
+
+            raise RuntimeError(
+                "OpenRouter TTS retornou áudio vazio"
+            )
+
+        return base64.b64encode(
+            resposta.content
+        ).decode("utf-8")

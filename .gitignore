@@ -6,3 +6,17 @@ vany_api_v05_render_backup.py
 vany_keys.db
 vany_keys_v1_5_backup.db
 *_backup.py
+
+# Vany local databases
+*.db
+
+# Local backups and temporary Python files
+*_backup.py
+*_backup_*.py
+*.save
+
+# Safety copies
+vany_api_v05_SEGURANCA_ATUAL*.py
+
+# Temporary / accidental files
+core

@@ -3,31 +3,25 @@
 
 """
 ============================================================
-VANY IA - ENGINE V05
+VANY IA - ENGINE V05.1
 ============================================================
 
-Arquitetura:
-    Vany App
-       ↓
-    Vany API
-       ↓
-    Engine V05
-       ↓
-    Modelo local / motor online
+Motor local da Vany IA.
 
-Objetivos:
-- manter fallback local
-- preparar integração com API
-- manter histórico de conversa
-- separar engine de servidor
-- preparar Vany para Sketchware Pro
+Recursos:
+- respostas básicas
+- matemática simples
+- identidade da Vany
+- explicações educativas
+- histórico local
+- carregamento do modelo V04
+- fallback seguro
 ============================================================
 """
 
 import json
 import os
 import re
-import sys
 import unicodedata
 from datetime import datetime
 
@@ -50,7 +44,7 @@ VOCAB_FILE = os.path.join(
     "vany_vocab.json"
 )
 
-ENGINE_VERSION = "05.0"
+ENGINE_VERSION = "05.1"
 
 MAX_HISTORY = 20
 
@@ -75,30 +69,20 @@ def remover_acentos(texto):
 
 def normalizar(texto):
 
-    texto = str(
-        texto
-    ).lower().strip()
+    texto = str(texto).lower().strip()
 
-    texto = remover_acentos(
-        texto
-    )
+    texto = remover_acentos(texto)
 
     substituicoes = {
-
         "vc": "voce",
         "vcs": "voces",
-
         "uque": "o que",
         "oque": "o que",
-
         "pq": "porque",
         "porq": "porque",
-
         "tb": "tambem",
         "tbm": "tambem",
-
         "eh": "e",
-
         "q": "que"
     }
 
@@ -131,38 +115,25 @@ class Historico:
     ):
 
         self.limite = limite
-
         self.mensagens = []
 
 
-    def adicionar_usuario(
-        self,
-        texto
-    ):
+    def adicionar_usuario(self, texto):
 
         self.mensagens.append({
-
             "role": "user",
-
             "content": texto,
-
             "time": datetime.now().isoformat()
         })
 
         self.limpar_excesso()
 
 
-    def adicionar_vany(
-        self,
-        texto
-    ):
+    def adicionar_vany(self, texto):
 
         self.mensagens.append({
-
             "role": "assistant",
-
             "content": texto,
-
             "time": datetime.now().isoformat()
         })
 
@@ -171,14 +142,10 @@ class Historico:
 
     def limpar_excesso(self):
 
-        if len(
-            self.mensagens
-        ) > self.limite:
+        if len(self.mensagens) > self.limite:
 
             self.mensagens = (
-                self.mensagens[
-                    -self.limite:
-                ]
+                self.mensagens[-self.limite:]
             )
 
 
@@ -189,16 +156,12 @@ class Historico:
 
     def obter(self):
 
-        return list(
-            self.mensagens
-        )
+        return list(self.mensagens)
 
 
     def quantidade(self):
 
-        return len(
-            self.mensagens
-        )
+        return len(self.mensagens)
 
 
 # ============================================================
@@ -210,7 +173,6 @@ class ModeloLocal:
     def __init__(self):
 
         self.modelo = None
-
         self.carregado = False
 
         self.carregar()
@@ -247,40 +209,20 @@ class ModeloLocal:
         if not self.carregado:
 
             return {
-
                 "loaded": False
-
             }
 
-
         return {
-
             "loaded": True,
-
-            "version":
-                self.modelo.get(
-                    "version"
-                ),
-
-            "type":
-                self.modelo.get(
-                    "type"
-                ),
-
-            "vocab_size":
-                self.modelo.get(
-                    "vocab_size"
-                ),
-
-            "embedding_dim":
-                self.modelo.get(
-                    "embedding_dim"
-                )
+            "version": self.modelo.get("version"),
+            "type": self.modelo.get("type"),
+            "vocab_size": self.modelo.get("vocab_size"),
+            "embedding_dim": self.modelo.get("embedding_dim")
         }
 
 
 # ============================================================
-# VANY ENGINE V05
+# MOTOR VANY V05.1
 # ============================================================
 
 class VanyEngineV05:
@@ -294,17 +236,14 @@ class VanyEngineV05:
         self.modo = "local"
 
         self.config = {
-
             "online": False,
-
             "provider": None,
-
             "model": None
         }
 
 
     # ========================================================
-    # CONFIGURAR MODO
+    # MODO
     # ========================================================
 
     def modo_local(self):
@@ -312,9 +251,7 @@ class VanyEngineV05:
         self.modo = "local"
 
         self.config["online"] = False
-
         self.config["provider"] = None
-
         self.config["model"] = None
 
 
@@ -327,33 +264,100 @@ class VanyEngineV05:
         self.modo = "online"
 
         self.config["online"] = True
-
         self.config["provider"] = provider
-
         self.config["model"] = model
 
 
     # ========================================================
-    # RESPOSTAS BÁSICAS
+    # MATEMÁTICA
     # ========================================================
+
+    def calcular(self, texto):
+        texto = texto.strip().lower()
+
+        # Remove acentos para facilitar o reconhecimento.
+        import unicodedata
+        # Preserva símbolos matemáticos antes de remover acentos.
+        texto = texto.replace("÷", "__DIVISAO__")
+
+        texto = unicodedata.normalize(
+            "NFD",
+            texto
+        ).encode(
+            "ascii",
+            "ignore"
+        ).decode("ascii")
+
+        texto = texto.replace("__DIVISAO__", "÷")
+
+        expressao = None
+
+        prefixos = [
+            "quanto e ",
+            "quanto da ",
+            "calcule ",
+            "calcular ",
+            "resultado de "
+        ]
+
+        for prefixo in prefixos:
+            if texto.startswith(prefixo):
+                expressao = texto[len(prefixo):].strip()
+                break
+
+        if expressao is None:
+            return None
+
+        # Remove pontuação no final.
+        expressao = re.sub(
+            r"[?!.,;:]+$",
+            "",
+            expressao
+        ).strip()
+
+        # Converte símbolos matemáticos.
+        expressao = expressao.replace("x", "*")
+        expressao = expressao.replace("÷", "/")
+
+        # Aceita somente matemática simples.
+        if not re.fullmatch(
+            r"[0-9+\-*/(). ]+",
+            expressao
+        ):
+            return None
+
+        try:
+            resultado = eval(
+                expressao,
+                {"__builtins__": {}},
+                {}
+            )
+
+            if isinstance(resultado, float):
+                if resultado.is_integer():
+                    resultado = int(resultado)
+                else:
+                    resultado = round(resultado, 10)
+
+            return f"O resultado é {resultado}."
+
+        except Exception:
+            return None
 
     def resposta_basica(
         self,
         texto
     ):
 
-        p = normalizar(
-            texto
-        )
+        p = normalizar(texto)
 
 
-        # --------------------------------------------
-        # SAUDAÇÃO
-        # --------------------------------------------
-
+        # SAUDAÇÕES
         if p in [
             "oi",
             "ola",
+            "ola vany",
+            "oi vany",
             "bom dia",
             "boa tarde",
             "boa noite"
@@ -365,70 +369,80 @@ class VanyEngineV05:
             )
 
 
-        # --------------------------------------------
         # IDENTIDADE
-        # --------------------------------------------
-
         if (
             "quem e voce" in p
             or
             "quem e a vany" in p
+            or
+            "quem es tu" in p
+            or
+            "quem es voce" in p
         ):
 
             return (
                 "Eu sou a Vany IA, uma assistente "
-                "de inteligência artificial."
+                "de inteligência artificial criada "
+                "para ajudar com perguntas, estudos, "
+                "programação e informações."
             )
 
 
-        # --------------------------------------------
         # NOME
-        # --------------------------------------------
-
         if (
             "qual e o seu nome" in p
             or
             "como voce se chama" in p
+            or
+            "seu nome" in p
+        ):
+
+            return "Meu nome é Vany IA."
+
+
+        # CRIADOR / PROJETO
+        if (
+            "o que e a vany" in p
+            or
+            "sobre a vany" in p
         ):
 
             return (
-                "Meu nome é Vany IA."
+                "A Vany IA é um projeto de assistente "
+                "de inteligência artificial com motor "
+                "local e integração com diferentes "
+                "provedores de IA."
             )
 
 
-        # --------------------------------------------
         # PYTHON
-        # --------------------------------------------
-
         if "python" in p:
 
             return (
                 "Python é uma linguagem de programação "
-                "usada para criar programas, trabalhar "
-                "com dados, texto e inteligência artificial."
+                "de alto nível usada em aplicações, "
+                "automação, dados, inteligência artificial "
+                "e desenvolvimento de software."
             )
 
 
-        # --------------------------------------------
         # IA
-        # --------------------------------------------
-
         if (
             "inteligencia artificial" in p
+            or
+            "o que e ia" in p
         ):
 
             return (
                 "Inteligência artificial é uma área da "
-                "computação que permite criar sistemas "
-                "capazes de analisar informações, aprender "
-                "padrões e produzir respostas."
+                "computação que desenvolve sistemas "
+                "capazes de processar informações, "
+                "identificar padrões e realizar tarefas "
+                "que normalmente exigem inteligência humana."
             )
 
 
-        # --------------------------------------------
         # API
-        # --------------------------------------------
-
         if (
             "o que e api" in p
             or
@@ -436,15 +450,40 @@ class VanyEngineV05:
         ):
 
             return (
-                "Uma API permite que diferentes programas "
-                "comuniquem entre si e troquem informações."
+                "Uma API é uma interface que permite "
+                "que diferentes programas comuniquem "
+                "entre si e troquem dados ou serviços."
             )
 
 
-        # --------------------------------------------
-        # AGRADECIMENTO
-        # --------------------------------------------
+        # ROUTER
+        if (
+            "router" in p
+            or
+            "roteador" in p
+        ):
 
+            return (
+                "O Vany Router é o sistema que seleciona "
+                "entre diferentes provedores de IA e pode "
+                "usar o modelo local da Vany quando os "
+                "serviços online não estão disponíveis."
+            )
+
+
+        # FALLBACK
+        if (
+            "fallback" in p
+        ):
+
+            return (
+                "Fallback é uma estratégia de segurança "
+                "na qual a Vany tenta outra opção quando "
+                "o serviço principal falha."
+            )
+
+
+        # OBRIGADO
         if (
             "obrigado" in p
             or
@@ -453,8 +492,34 @@ class VanyEngineV05:
             "valeu" in p
         ):
 
+            return "De nada! 😊"
+
+
+        # COMO ESTÁ
+        if (
+            "tudo bem" in p
+            or
+            "como voce esta" in p
+        ):
+
             return (
-                "De nada! 😊"
+                "Estou funcionando e pronta para ajudar! 😊"
+            )
+
+
+        # ESTUDOS
+        if (
+            "ajuda nos estudos" in p
+            or
+            "podes me ajudar" in p
+            or
+            "pode me ajudar" in p
+        ):
+
+            return (
+                "Claro! 📚 Posso ajudar a explicar "
+                "matérias, resolver exercícios e "
+                "organizar seus estudos."
             )
 
 
@@ -470,6 +535,15 @@ class VanyEngineV05:
         texto
     ):
 
+        resposta = self.calcular(
+            texto
+        )
+
+        if resposta:
+
+            return resposta
+
+
         resposta = self.resposta_basica(
             texto
         )
@@ -482,16 +556,16 @@ class VanyEngineV05:
         if self.modelo_local.carregado:
 
             return (
-                "Recebi sua mensagem. "
-                "O modelo local V04 ainda está "
-                "em desenvolvimento para esse tipo "
-                "de pergunta."
+                "Ainda estou aprendendo essa pergunta "
+                "no modo local. Posso ajudar melhor com "
+                "matemática simples, programação, IA, "
+                "APIs e perguntas básicas."
             )
 
 
         return (
             "O modo local da Vany está disponível, "
-            "mas o modelo não foi carregado."
+            "mas o modelo local não foi carregado."
         )
 
 
@@ -511,20 +585,13 @@ class VanyEngineV05:
 
         if not texto:
 
-            return (
-                "Digite uma mensagem."
-            )
+            return "Digite uma mensagem."
 
 
-        # Guardar pergunta
         self.historico.adicionar_usuario(
             texto
         )
 
-
-        # --------------------------------------------
-        # MODO LOCAL
-        # --------------------------------------------
 
         if self.modo == "local":
 
@@ -532,28 +599,17 @@ class VanyEngineV05:
                 texto
             )
 
-
-        # --------------------------------------------
-        # MODO ONLINE
-        # --------------------------------------------
-
         else:
 
-            # A integração real com a API será
-            # adicionada na próxima etapa.
-
             resposta = (
-                "O modo online da Vany está "
-                "preparado, mas a API ainda "
-                "não foi conectada."
+                "O modo online está preparado "
+                "para ser utilizado pelo Vany Router."
             )
 
 
-        # Guardar resposta
         self.historico.adicionar_vany(
             resposta
         )
-
 
         return resposta
 
@@ -564,250 +620,86 @@ class VanyEngineV05:
 
     def info(self):
 
+        dados = {
+            "engine": ENGINE_VERSION,
+            "mode": self.modo,
+            "local_model": self.modelo_local.info(),
+            "history": self.historico.quantidade(),
+            "online": self.config["online"],
+            "provider": self.config["provider"],
+            "model": self.config["model"]
+        }
+
         print()
         print("=" * 60)
-        print("          VANY IA - ENGINE V05")
+        print("          VANY IA - ENGINE V05.1")
         print("=" * 60)
-
-        print(
-            "Engine:",
-            ENGINE_VERSION
-        )
-
-        print(
-            "Modo:",
-            self.modo
-        )
-
+        print("Engine:", ENGINE_VERSION)
+        print("Modo:", self.modo)
         print(
             "Modelo local:",
             "SIM"
             if self.modelo_local.carregado
             else "NÃO"
         )
-
         print(
             "Histórico:",
             self.historico.quantidade(),
             "mensagens"
         )
-
         print(
             "Online:",
             "SIM"
             if self.config["online"]
             else "NÃO"
         )
-
-        if self.config["provider"]:
-
-            print(
-                "Provider:",
-                self.config["provider"]
-            )
-
-        if self.config["model"]:
-
-            print(
-                "Modelo online:",
-                self.config["model"]
-            )
-
         print("=" * 60)
         print()
 
-
-    # ========================================================
-    # CHAT
-    # ========================================================
-
-    def chat(self):
-
-        print()
-        print("=" * 60)
-        print("             VANY IA V05")
-        print("=" * 60)
-
-        print(
-            "Modo atual: LOCAL"
-        )
-
-        print(
-            "Comandos:"
-        )
-
-        print(
-            "  sair     - terminar"
-        )
-
-        print(
-            "  limpar   - limpar histórico"
-        )
-
-        print(
-            "  info     - informações"
-        )
-
-        print("=" * 60)
-        print()
-
-
-        while True:
-
-            try:
-
-                texto = input(
-                    "Você: "
-                ).strip()
-
-            except (
-                KeyboardInterrupt,
-                EOFError
-            ):
-
-                print()
-                print(
-                    "Vany: Até logo! 👋"
-                )
-
-                break
-
-
-            if not texto:
-
-                continue
-
-
-            comando = normalizar(
-                texto
-            )
-
-
-            if comando == "sair":
-
-                print()
-                print(
-                    "Vany: Até logo! 👋"
-                )
-
-                break
-
-
-            if comando == "limpar":
-
-                self.historico.limpar()
-
-                print(
-                    "Vany: Histórico limpo."
-                )
-
-                continue
-
-
-            if comando == "info":
-
-                self.info()
-
-                continue
-
-
-            resposta = self.responder(
-                texto
-            )
-
-            print(
-                "Vany:",
-                resposta
-            )
+        return dados
 
 
 # ============================================================
-# MAIN
-# ============================================================
-
-def main():
-
-    engine = VanyEngineV05()
-
-
-    if len(
-        sys.argv
-    ) > 1:
-
-        argumento = sys.argv[1]
-
-
-        if argumento == "--info":
-
-            engine.info()
-
-            return
-
-
-        if argumento == "--test":
-
-            perguntas = [
-
-                "Olá",
-
-                "Quem é você?",
-
-                "Quem e vc",
-
-                "Qual é o seu nome?",
-
-                "O que é Python?",
-
-                "O que é inteligência artificial?",
-
-                "O que é uma API?",
-
-                "Obrigado"
-            ]
-
-
-            print()
-
-            for pergunta in perguntas:
-
-                print(
-                    "Você:",
-                    pergunta
-                )
-
-                print(
-                    "Vany:",
-                    engine.responder(
-                        pergunta
-                    )
-                )
-
-                print()
-
-            return
-
-
-        pergunta = " ".join(
-            sys.argv[1:]
-        )
-
-        print(
-            "Vany:",
-            engine.responder(
-                pergunta
-            )
-        )
-
-        return
-
-
-    engine.chat()
-
-
-# ============================================================
-# EXECUTAR
+# EXECUÇÃO DIRETA
 # ============================================================
 
 if __name__ == "__main__":
 
-    main()
+    engine = VanyEngineV05()
+
+    engine.info()
+
+    print("Digite 'sair' para terminar.")
+    print()
+
+    while True:
+
+        try:
+
+            pergunta = input("Você: ").strip()
+
+        except (
+            KeyboardInterrupt,
+            EOFError
+        ):
+
+            print("\nVany: Até logo! 👋")
+            break
+
+        if not pergunta:
+
+            continue
+
+        if normalizar(pergunta) == "sair":
+
+            print("Vany: Até logo! 👋")
+            break
+
+        resposta = engine.responder(
+            pergunta
+        )
+
+        print(
+            "Vany:",
+            resposta
+        )
