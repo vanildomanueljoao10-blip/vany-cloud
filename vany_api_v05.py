@@ -80,8 +80,9 @@ google = oauth.register(
 
 GOOGLE_REDIRECT_URI = os.environ.get(
     "GOOGLE_REDIRECT_URI",
-    "https://vany-cloud.onrender.com/auth/google/callback"
-).strip()
+GOOGLE_REDIRECT_URI = (
+    "https://vany-cloud-1.onrender.com/auth/google/callback"
+)).strip()
 
 GOOGLE_AUTH_DATABASE = "vany_google_auth.db"
 
@@ -2407,8 +2408,17 @@ def cloud_register():
 
     data = request.get_json(silent=True) or {}
 
-    username = str(data.get("username", "")).strip()
-    email = data.get("email")
+    username = str(
+        data.get("username", "")
+    ).strip()
+
+    email = str(
+        data.get("email", "")
+    ).strip().lower()
+
+    password = str(
+        data.get("password", "")
+    )
 
     if not username:
         return {
@@ -2416,11 +2426,29 @@ def cloud_register():
             "error": "username_required"
         }, 400
 
+    if not email:
+        return {
+            "success": False,
+            "error": "email_required"
+        }, 400
+
+    if not password:
+        return {
+            "success": False,
+            "error": "password_required"
+        }, 400
+
+    if len(password) < 8:
+        return {
+            "success": False,
+            "error": "password_too_short"
+        }, 400
+
     return create_user(
         username=username,
-        email=email
+        email=email,
+        password=password
     )
-
 
 @app.route("/cloud/auth/login", methods=["POST"])
 def cloud_login():
