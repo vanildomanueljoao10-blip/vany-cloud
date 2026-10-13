@@ -78,11 +78,9 @@ google = oauth.register(
     }
 )
 
-GOOGLE_REDIRECT_URI = os.environ.get(
-    "GOOGLE_REDIRECT_URI",
 GOOGLE_REDIRECT_URI = (
     "https://vany-cloud-1.onrender.com/auth/google/callback"
-)).strip()
+).strip()
 
 GOOGLE_AUTH_DATABASE = "vany_google_auth.db"
 
