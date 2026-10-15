@@ -74,7 +74,8 @@ google = oauth.register(
         "https://accounts.google.com/.well-known/openid-configuration",
 
     client_kwargs={
-        "scope": "openid email profile"
+        "scope": "openid email profile",
+        "prompt": "select_account"
     }
 )
 
