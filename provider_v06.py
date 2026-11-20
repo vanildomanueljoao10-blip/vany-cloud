@@ -6,6 +6,7 @@ from openrouter_provider import OpenRouterProvider
 from provider_openai import OpenAIProvider
 from provider_claude import ClaudeProvider
 from provider_deepseek import DeepSeekProvider
+from provider_groq import GroqProvider
 
 
 class ProviderManager:
@@ -17,6 +18,7 @@ class ProviderManager:
         self.openai = OpenAIProvider()
         self.claude = ClaudeProvider()
         self.deepseek = DeepSeekProvider()
+        self.groq = GroqProvider()
 
         self.provider = "openrouter"
         self.model = self.openrouter.model
@@ -29,6 +31,7 @@ class ProviderManager:
             "openai",
             "claude",
             "deepseek",
+            "groq",
             "local"
         ]
 
@@ -65,6 +68,10 @@ class ProviderManager:
         if self.provider == "deepseek":
 
             return self.deepseek.info()
+
+        if self.provider == "groq":
+
+            return self.groq.info()
 
         if self.provider == "auto":
 
@@ -103,7 +110,10 @@ class ProviderManager:
                 self.claude.info(),
 
             "deepseek":
-                self.deepseek.info()
+                self.deepseek.info(),
+
+            "groq":
+                self.groq.info()
         }
 
     # ========================================================
@@ -121,7 +131,8 @@ class ProviderManager:
             "openrouter",
             "openai",
             "claude",
-            "deepseek"
+            "deepseek",
+            "groq"
         ]
 
     # ========================================================
@@ -266,6 +277,26 @@ class ProviderManager:
 
             return self.info()
 
+        if provider in [
+            "groq",
+            "vany-groq"
+        ]:
+
+            self.provider = "groq"
+
+            if model not in [
+                None,
+                "",
+                "auto",
+                "vany-groq"
+            ]:
+
+                self.groq.model = model
+
+            self.model = self.groq.model
+
+            return self.info()
+
         raise ValueError(
             "Provider não suportado: "
             + provider
@@ -294,6 +325,9 @@ class ProviderManager:
 
         if nome == "deepseek":
             return self.deepseek
+
+        if nome == "groq":
+            return self.groq
 
         return None
 
